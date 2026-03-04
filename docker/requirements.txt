@@ -1,0 +1,2 @@
+flask
+git+https://github.com/crstmkt/dkb-robo.git@docker_getBankAccountStatements

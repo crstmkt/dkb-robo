@@ -34,6 +34,7 @@ class Authentication:
     proxies = {}
     token_dic = None
     unfiltered = False
+    xvfb = False
 
     def __init__(
         self,
@@ -43,6 +44,7 @@ class Authentication:
         proxies: Dict[str, str] = None,
         mfa_device: int = None,
         unfiltered: bool = False,
+        xvfb: bool = False,
     ):
         """Constructor"""
         self.chip_tan = chip_tan
@@ -50,6 +52,7 @@ class Authentication:
         self.dkb_password = dkb_password
         self.proxies = proxies
         self.unfiltered = unfiltered
+        self.xvfb = xvfb
         if chip_tan:
             logger.info("Using to chip_tan to login")
             if chip_tan in ("qr", "chip_tan_qr"):
@@ -305,7 +308,7 @@ class Authentication:
         logger.debug("Authentication._token_get()\n")
 
         # fetch captcha token required since 2025-11-01
-        captcha_token = get_dkb_redeem_token()
+        captcha_token = get_dkb_redeem_token(xvfb=self.xvfb)
 
         # login via API
         data_dic = {

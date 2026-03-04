@@ -127,9 +127,14 @@ class TestAuthentication(unittest.TestCase):
         }
         self.assertEqual(exp_headers, client.headers)
 
+    def test_008b_init_xvfb(self):
+        """test init() with xvfb=True"""
+        self.auth.__init__(xvfb=True)
+        self.assertTrue(self.auth.xvfb)
+
     @patch("dkb_robo.authentication.get_dkb_redeem_token")
     def test_009_token_get(self, mock_captcha):
-        """test _token_get() ok"""
+        """test _token_get() ok - calls get_dkb_redeem_token with xvfb=False by default"""
         mock_captcha.return_value = "captcha_token"
         self.auth.dkb_user = "dkb_user"
         self.auth.dkb_password = "dkb_password"
@@ -138,7 +143,20 @@ class TestAuthentication(unittest.TestCase):
         self.auth.client.post.return_value.json.return_value = {"foo": "bar"}
         self.auth._token_get()
         self.assertEqual({"foo": "bar"}, self.auth.token_dic)
-        self.assertTrue(mock_captcha.called)
+        mock_captcha.assert_called_once_with(xvfb=False)
+
+    @patch("dkb_robo.authentication.get_dkb_redeem_token")
+    def test_009b_token_get_xvfb(self, mock_captcha):
+        """test _token_get() passes xvfb=True to get_dkb_redeem_token"""
+        mock_captcha.return_value = "captcha_token"
+        self.auth.dkb_user = "dkb_user"
+        self.auth.dkb_password = "dkb_password"
+        self.auth.xvfb = True
+        self.auth.client = Mock()
+        self.auth.client.post.return_value.status_code = 200
+        self.auth.client.post.return_value.json.return_value = {"foo": "bar"}
+        self.auth._token_get()
+        mock_captcha.assert_called_once_with(xvfb=True)
 
     @patch("dkb_robo.authentication.get_dkb_redeem_token")
     def test_010_token_get(self, mock_captcha):

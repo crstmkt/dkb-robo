@@ -28,11 +28,11 @@ def _poll_frc_token(sb, timeout=30):
     return False
 
 
-def get_dkb_redeem_token(timeout=30, headless=False):
+def get_dkb_redeem_token(timeout=30, headless=False, xvfb=False):
     """Open DKB login page, solve Friendly Captcha, return the redeem_token."""
     logger.debug("captcha.get_dkb_redeem_token()")
 
-    with SB(uc=True, locale="de", headless=headless) as sb:
+    with SB(uc=True, locale="de", headless=headless, xvfb=xvfb) as sb:
         sb.open(DKB_LOGIN_URL)
 
         for _ in range(30):

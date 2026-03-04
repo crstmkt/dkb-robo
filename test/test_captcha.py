@@ -98,7 +98,7 @@ class TestGetDkbRedeemToken(unittest.TestCase):
         mock_sb.return_value.__enter__.return_value = mock_sb_instance
 
         get_dkb_redeem_token()
-        mock_sb.assert_called_once_with(uc=True, locale="de", headless=False)
+        mock_sb.assert_called_once_with(uc=True, locale="de", headless=False, xvfb=False)
 
     @patch("dkb_robo.captcha._poll_frc_token", new_callable=MagicMock)
     @patch("dkb_robo.captcha.SB")
@@ -111,6 +111,18 @@ class TestGetDkbRedeemToken(unittest.TestCase):
         get_dkb_redeem_token(headless=True)
         _, kwargs = mock_sb.call_args
         self.assertTrue(kwargs["headless"])
+
+    @patch("dkb_robo.captcha._poll_frc_token", new_callable=MagicMock)
+    @patch("dkb_robo.captcha.SB")
+    def test_006_xvfb_param_forwarded(self, mock_sb, mock_poll):
+        """get_dkb_redeem_token(xvfb=True) passes xvfb=True to SB"""
+        mock_poll.return_value = "token"
+        mock_sb_instance = MagicMock()
+        mock_sb.return_value.__enter__.return_value = mock_sb_instance
+
+        get_dkb_redeem_token(xvfb=True)
+        _, kwargs = mock_sb.call_args
+        self.assertTrue(kwargs["xvfb"])
 
     @patch("dkb_robo.captcha._poll_frc_token", new_callable=MagicMock)
     @patch("dkb_robo.captcha.SB")

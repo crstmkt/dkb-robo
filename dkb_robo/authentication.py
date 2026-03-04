@@ -8,6 +8,7 @@ import io
 import threading
 import logging
 import requests
+from dkb_robo.captcha import get_dkb_redeem_token
 from dkb_robo.legacy import Wrapper as Legacywrapper
 from dkb_robo.portfolio import Overview
 from dkb_robo.utilities import DKBRoboError, JSON_CONTENT_TYPE
@@ -189,27 +190,6 @@ class Authentication:
         logger.debug("Authentication._mfa_get() ended\n")
         return mfa_dic
 
-    def _mfa_process(
-        self,
-        device_num: int,
-        device_list: List[int],
-        _tmp_device_num: str,
-        deviceselection_completed: bool,
-    ) -> Tuple[int, bool]:
-        logger.debug("Authentication._mfa_process(%s)", _tmp_device_num)
-        try:
-            # we are referring to an index in a list thus we need to lower the user input by 1
-            if int(_tmp_device_num) - 1 in device_list:
-                deviceselection_completed = True
-                device_num = int(_tmp_device_num) - 1
-            else:
-                print("\nWrong input!")
-        except Exception:
-            print("\nInvalid input!")
-
-        logger.debug("Authentication._mfa_process()\n ended")
-        return device_num, deviceselection_completed
-
     def _mfa_select(self, mfa_dic: Dict[str, str]) -> int:
         """pick mfa_device from dictionary"""
         logger.debug("Authentication._mfa_select()")
@@ -229,24 +209,11 @@ class Authentication:
             device_num = self.mfa_device - 1
 
         elif "data" in mfa_dic and len(mfa_dic["data"]) > 1:
-            device_list = []
-            deviceselection_completed = False
-            while not deviceselection_completed:
-                print("\nPick an authentication device from the below list:")
-                # we have multiple devices to select
-                for idx, device_dic in enumerate(mfa_dic["data"]):
-                    device_list.append(idx)
-                    if (
-                        "attributes" in device_dic
-                        and "deviceName" in device_dic["attributes"]
-                    ):
-                        # we should start counting with 1 for the user
-                        print(f"[{idx + 1}] - {device_dic['attributes']['deviceName']}")
-                _tmp_device_num = input(":")
-
-                device_num, deviceselection_completed = self._mfa_process(
-                    device_num, device_list, _tmp_device_num, deviceselection_completed
-                )
+            # use the first device (preferred device after _mfa_sort())
+            logger.debug(
+                "api.Wrapper._mfa_select(): multiple devices, using preferred device (index 0)"
+            )
+            device_num = 0
 
         logger.debug("Authentication._mfa_select() ended with: %s", device_num)
         return device_num
@@ -337,8 +304,12 @@ class Authentication:
         """get access token"""
         logger.debug("Authentication._token_get()\n")
 
+        # fetch captcha token required since 2025-11-01
+        captcha_token = get_dkb_redeem_token()
+
         # login via API
         data_dic = {
+            "captcha_token": captcha_token,
             "grant_type": "banking_user_sca",
             "username": self.dkb_user,
             "password": self.dkb_password,

@@ -24,7 +24,10 @@ def run_sync() -> int:
             target = CONSUME_DIR / doc.filename()
             rcode = doc.download(dkb.wrapper.client, target)
             if rcode:
-                doc.mark_read(dkb.wrapper.client, True)
-                logger.info("Downloaded: %s", target.name)
+                try:
+                    doc.mark_read(dkb.wrapper.client, True)
+                    logger.info("Downloaded and marked read: %s", target.name)
+                except Exception as e:
+                    logger.warning("Downloaded but mark_read failed for %s: %s", target.name, e)
                 count += 1
     return count

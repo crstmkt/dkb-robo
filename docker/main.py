@@ -6,7 +6,7 @@ from flask import Flask, jsonify
 from dkb_sync import run_sync
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger(__name__)
 
 sync_state = {

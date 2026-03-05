@@ -12,13 +12,19 @@ CONSUME_DIR = Path(os.environ.get("CONSUME_DIR", "/consume"))
 
 def run_sync() -> int:
     CONSUME_DIR.mkdir(parents=True, exist_ok=True)
-    with DKBRobo(dkb_user=DKB_USER, dkb_password=DKB_PASSWORD, xvfb=True) as dkb:
-        result = dkb.download(path=CONSUME_DIR, download_all=False, mark_read=True)
-
     count = 0
-    for category in result.values():
-        for doc in category.get("documents", {}).values():
-            rcode = doc.get("rcode")
-            if rcode and rcode != "skipped":
+    with DKBRobo(dkb_user=DKB_USER, dkb_password=DKB_PASSWORD, xvfb=True, unfiltered=True) as dkb:
+        WANTED = {"bankAccountStatement", "creditCardStatement"}
+        documents = dkb.download(path=None, download_all=False)
+        logger.info("Total documents: %d", len(documents))
+        for doc in documents.values():
+            logger.info("Doc: %s type=%s", doc.filename(), doc.message.documentType if doc.message else "no-message")
+            if not doc.message or doc.message.documentType not in WANTED:
+                continue
+            target = CONSUME_DIR / doc.filename()
+            rcode = doc.download(dkb.wrapper.client, target)
+            if rcode:
+                doc.mark_read(dkb.wrapper.client, True)
+                logger.info("Downloaded: %s", target.name)
                 count += 1
     return count

@@ -78,7 +78,7 @@ class TestAuthentication(unittest.TestCase):
         mock_session.headers = {}
         client = self.auth._session_new()
         exp_headers = {
-            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Language": "de-DE;q=0.8,de;q=0.6,en-US;q=0.4,en;q=0.2",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
@@ -110,7 +110,7 @@ class TestAuthentication(unittest.TestCase):
         mock_session.return_value.cookies = {"__Host-xsrf": "foo"}
         client = self.auth._session_new()
         exp_headers = {
-            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Language": "de-DE;q=0.8,de;q=0.6,en-US;q=0.4,en;q=0.2",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
@@ -139,6 +139,7 @@ class TestAuthentication(unittest.TestCase):
         self.auth.dkb_user = "dkb_user"
         self.auth.dkb_password = "dkb_password"
         self.auth.client = Mock()
+        self.auth.client.headers = {}
         self.auth.client.post.return_value.status_code = 200
         self.auth.client.post.return_value.json.return_value = {"foo": "bar"}
         self.auth._token_get()
@@ -153,6 +154,7 @@ class TestAuthentication(unittest.TestCase):
         self.auth.dkb_password = "dkb_password"
         self.auth.xvfb = True
         self.auth.client = Mock()
+        self.auth.client.headers = {}
         self.auth.client.post.return_value.status_code = 200
         self.auth.client.post.return_value.json.return_value = {"foo": "bar"}
         self.auth._token_get()
@@ -165,6 +167,7 @@ class TestAuthentication(unittest.TestCase):
         self.auth.dkb_user = "dkb_user"
         self.auth.dkb_password = "dkb_password"
         self.auth.client = Mock()
+        self.auth.client.headers = {}
         self.auth.client.post.return_value.status_code = 400
         self.auth.client.post.return_value.json.return_value = {"foo": "bar"}
         with self.assertRaises(Exception) as err:

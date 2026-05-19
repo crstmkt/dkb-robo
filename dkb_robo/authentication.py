@@ -244,7 +244,7 @@ class Authentication:
         logger.debug("Authentication._session_new()\n")
 
         headers = {
-            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Language": "de-DE;q=0.8,de;q=0.6,en-US;q=0.4,en;q=0.2",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
@@ -318,7 +318,9 @@ class Authentication:
             "password": self.dkb_password,
             "sca_type": "web-login",
         }
+        self.client.headers["Accept"] = "application/json, text/plain, */*"
         response = self.client.post(self.base_url + "/token", data=data_dic)
+        self.client.headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
         if response.status_code == 200:
             self.token_dic = response.json()
         else:

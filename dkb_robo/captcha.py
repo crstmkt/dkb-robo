@@ -11,28 +11,31 @@ FRC_INPUT_SELECTOR = 'input[name="frc-captcha-response"]'
 DKB_LOGIN_URL = "https://banking.dkb.de/login"
 DEBUG_DIR = os.environ.get("DKB_CAPTCHA_DEBUG_DIR", "/tmp")
 
-# Reach into the Usercentrics shadow DOM and click the first button that
-# dismisses the consent banner. Prefer "deny", fall back to "accept all".
-# Returns "clicked:<selector>", "no-host" or "no-button" for logging.
+# Dismiss the cookie consent banner without depending on a specific host id
+# (DKB changed the Usercentrics container). Walk every (open) shadow root,
+# collect all buttons, and click one that matches a deny/accept label. Prefer
+# "deny / only necessary", fall back to "accept all". Returns
+# "clicked:<label>" on success, otherwise "no-button:<json list>" listing the
+# buttons that were found so the matcher can be adjusted from the logs.
 _CONSENT_DISMISS_JS = """
 (() => {
-  const host = document.querySelector('#usercentrics-cmp-ui');
-  if (!host || !host.shadowRoot) return 'no-host';
-  const sr = host.shadowRoot;
-  const sels = [
-    'button[data-testid="uc-deny-all-button"]',
-    'button.uc-deny-button',
-    'button[data-testid="uc-accept-all-button"]',
-    'button.uc-accept-all-button'
-  ];
-  for (const s of sels) {
-    const b = sr.querySelector(s);
-    if (b) { b.click(); return 'clicked:' + s; }
+  function deepButtons(root, acc) {
+    root.querySelectorAll('*').forEach(el => {
+      if (el.shadowRoot) deepButtons(el.shadowRoot, acc);
+    });
+    root.querySelectorAll('button,[role="button"]').forEach(b => acc.push(b));
   }
-  const found = Array.from(sr.querySelectorAll('button')).map(
-    b => (b.getAttribute('data-testid') || '') + '|' + (b.textContent || '').trim()
-  );
-  return 'no-button:' + JSON.stringify(found);
+  const btns = [];
+  deepButtons(document, btns);
+  const label = b => ((b.getAttribute('data-testid') || '') + ' ' +
+                      (b.getAttribute('aria-label') || '') + ' ' +
+                      (b.textContent || '')).trim();
+  const deny = /(ablehnen|nur notwendige|only necessary|deny|reject|essenziell|essentiell)/i;
+  const accept = /(alle akzeptieren|alles akzeptieren|accept all|zustimmen|einverstanden|accept)/i;
+  let target = btns.find(b => deny.test(label(b)));
+  if (!target) target = btns.find(b => accept.test(label(b)));
+  if (target) { target.click(); return 'clicked:' + label(target).slice(0, 40); }
+  return 'no-button:' + JSON.stringify(btns.map(b => label(b).slice(0, 30)).slice(0, 25));
 })()
 """
 
@@ -102,14 +105,14 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
                 try:
                     result = sb.cdp.evaluate(_CONSENT_DISMISS_JS)
                     if result and str(result).startswith("clicked:"):
-                        logger.debug("captcha: consent dismiss -> %s", result)
+                        logger.info("captcha: consent dismissed -> %s", result)
                         consent_done = True
-                    elif str(result).startswith("no-button"):
-                        # known selectors did not match - surface the available
-                        # buttons so the selector list can be updated
-                        logger.warning("captcha: consent buttons not matched -> %s", result)
+                    else:
+                        # not clicked (no-button / unexpected) - surface the
+                        # available buttons so the matcher can be adjusted
+                        logger.warning("captcha: consent not dismissed -> %s", result)
                 except Exception as err:
-                    logger.debug("captcha: consent dismiss failed: %r", err)
+                    logger.warning("captcha: consent dismiss threw -> %r", err)
             # Click the FRC iframe element via CDP (avoids cross-origin switch_to_frame)
             try:
                 sb.cdp.find_element("iframe.frc-i-widget").click()

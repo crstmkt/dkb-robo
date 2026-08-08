@@ -11,6 +11,31 @@ FRC_INPUT_SELECTOR = 'input[name="frc-captcha-response"]'
 DKB_LOGIN_URL = "https://banking.dkb.de/login"
 DEBUG_DIR = os.environ.get("DKB_CAPTCHA_DEBUG_DIR", "/tmp")
 
+# Reach into the Usercentrics shadow DOM and click the first button that
+# dismisses the consent banner. Prefer "deny", fall back to "accept all".
+# Returns "clicked:<selector>", "no-host" or "no-button" for logging.
+_CONSENT_DISMISS_JS = """
+(() => {
+  const host = document.querySelector('#usercentrics-cmp-ui');
+  if (!host || !host.shadowRoot) return 'no-host';
+  const sr = host.shadowRoot;
+  const sels = [
+    'button[data-testid="uc-deny-all-button"]',
+    'button.uc-deny-button',
+    'button[data-testid="uc-accept-all-button"]',
+    'button.uc-accept-all-button'
+  ];
+  for (const s of sels) {
+    const b = sr.querySelector(s);
+    if (b) { b.click(); return 'clicked:' + s; }
+  }
+  const found = Array.from(sr.querySelectorAll('button')).map(
+    b => (b.getAttribute('data-testid') || '') + '|' + (b.textContent || '').trim()
+  );
+  return 'no-button:' + JSON.stringify(found);
+})()
+"""
+
 
 def _dump_debug(sb, tag):
     """save a screenshot and page source for post-mortem analysis"""
@@ -66,15 +91,25 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
         sb.open(DKB_LOGIN_URL)
 
         clicked = False
+        consent_done = False
         for _ in range(30):
-            # Dismiss cookie banner via CDP evaluate (works in UC/CDP mode)
-            try:
-                sb.cdp.evaluate(
-                    "document.querySelector('#usercentrics-cmp-ui')"
-                    ".shadowRoot.querySelector('button.uc-deny-button').click()"
-                )
-            except Exception:
-                pass
+            # Dismiss the Usercentrics cookie consent banner via CDP evaluate.
+            # DKB reworked the dialog (2026-08): the old `button.uc-deny-button`
+            # is gone, so try the current deny selectors and fall back to
+            # "accept all" - the banner just needs to disappear so the FRC
+            # widget becomes interactable.
+            if not consent_done:
+                try:
+                    result = sb.cdp.evaluate(_CONSENT_DISMISS_JS)
+                    if result and str(result).startswith("clicked:"):
+                        logger.debug("captcha: consent dismiss -> %s", result)
+                        consent_done = True
+                    elif str(result).startswith("no-button"):
+                        # known selectors did not match - surface the available
+                        # buttons so the selector list can be updated
+                        logger.warning("captcha: consent buttons not matched -> %s", result)
+                except Exception as err:
+                    logger.debug("captcha: consent dismiss failed: %r", err)
             # Click the FRC iframe element via CDP (avoids cross-origin switch_to_frame)
             try:
                 sb.cdp.find_element("iframe.frc-i-widget").click()

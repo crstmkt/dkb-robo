@@ -1,7 +1,6 @@
 # pylint: disable=broad-except
 """Module to solve DKB Friendly Captcha via SeleniumBase + undetected-chromedriver"""
 import logging
-import os
 import time
 from seleniumbase import SB
 
@@ -10,7 +9,6 @@ logger = logging.getLogger(__name__)
 FRC_INPUT_SELECTOR = 'input[name="frc-captcha-response"]'
 FRC_WIDGET_SELECTOR = "iframe.frc-i-widget"
 DKB_LOGIN_URL = "https://banking.dkb.de/login"
-DEBUG_DIR = os.environ.get("DKB_CAPTCHA_DEBUG_DIR", "/tmp")
 
 # The Usercentrics consent banner renders in a CROSS-ORIGIN iframe
 # (web.cmp.usercentrics.eu), which is an out-of-process frame (OOPIF): its
@@ -48,19 +46,6 @@ def _consent_present(sb):
         return bool(sb.cdp.evaluate(_CONSENT_VISIBLE_JS))
     except Exception:
         return False
-
-
-def _dump_debug(sb, tag):
-    """save a screenshot and page source for post-mortem analysis"""
-    try:
-        shot = os.path.join(DEBUG_DIR, f"dkb_captcha_{tag}.png")
-        html = os.path.join(DEBUG_DIR, f"dkb_captcha_{tag}.html")
-        sb.save_screenshot(shot)
-        with open(html, "w", encoding="utf-8") as fso:
-            fso.write(sb.get_page_source())
-        logger.error("captcha._dump_debug(): wrote %s and %s", shot, html)
-    except Exception as err:
-        logger.error("captcha._dump_debug() failed: %r", err)
 
 
 def _poll_frc_token(sb, timeout=30):
@@ -166,12 +151,8 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
 
         if not clicked:
             logger.error("captcha: FRC widget (iframe.frc-i-widget) not found/clickable")
-            _dump_debug(sb, "no-widget")
 
         token = _poll_frc_token(sb, timeout)
-
-        if not token:
-            _dump_debug(sb, "timeout")
 
     logger.debug("captcha.get_dkb_redeem_token() ended")
     return token

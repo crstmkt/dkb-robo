@@ -8,32 +8,36 @@ from seleniumbase import SB
 logger = logging.getLogger(__name__)
 
 FRC_INPUT_SELECTOR = 'input[name="frc-captcha-response"]'
+FRC_WIDGET_SELECTOR = "iframe.frc-i-widget"
 DKB_LOGIN_URL = "https://banking.dkb.de/login"
 DEBUG_DIR = os.environ.get("DKB_CAPTCHA_DEBUG_DIR", "/tmp")
 
 # The Usercentrics consent banner renders in a CROSS-ORIGIN iframe
-# (web.cmp.usercentrics.eu). Its buttons are unreachable: same-origin policy
-# blocks JS, and the iframe is an out-of-process frame (OOPIF) in its own CDP
-# target, so sb.cdp.find_element() (main-frame target) cannot see them either -
-# and CDP Mode in seleniumbase has no frame switching.
-# The iframe ELEMENT, however, lives in the top document (only its *content* is
-# cross-origin). So instead of clicking "deny" we simply remove the overlay
-# iframe (and its wrapper) from the top frame and release the scroll lock -
-# that unblocks the underlying login page / FRC widget. Returns "removed:<n>".
-_CONSENT_REMOVE_JS = """
-(() => {
-  let n = 0;
-  document.querySelectorAll('iframe[src*="usercentrics"], iframe[src*="cmp"]').forEach(f => {
-    const p = f.parentElement;
-    f.remove();
-    if (p && p !== document.body && p.tagName === 'DIV' && !p.querySelector('iframe')) p.remove();
-    n++;
-  });
-  document.documentElement.style.overflow = '';
-  document.body.style.overflow = '';
-  return 'removed:' + n;
-})()
-"""
+# (web.cmp.usercentrics.eu), which is an out-of-process frame (OOPIF): its
+# buttons are reachable neither via same-origin JS nor via sb.cdp.find_element()
+# (main-frame target only; CDP Mode has no frame switching). Removing the iframe
+# from the top frame does not work either - Usercentrics re-injects it.
+# So we click the real "Ablehnen" button with a REAL OS-level GUI mouse click
+# (via xvfb), which - unlike a synthetic click - reaches the OOPIF and makes
+# Usercentrics persist the choice so the banner stays gone.
+# Selector for the consent overlay iframe (to detect presence):
+CONSENT_IFRAME_SELECTOR = 'iframe[src*="usercentrics"]'
+# "Ablehnen" button center in the fixed 1280x753 headless viewport, as an offset
+# from the top-left of <html> (= viewport origin in screen coords). "Alles
+# akzeptieren" would be roughly (788, 537) if deny ever stops working.
+CONSENT_DENY_XY = (491, 537)
+
+
+def _consent_present(sb):
+    """return True while the Usercentrics consent overlay iframe is in the DOM"""
+    try:
+        return bool(
+            sb.cdp.evaluate(
+                f'!!document.querySelector(\'{CONSENT_IFRAME_SELECTOR}\')'
+            )
+        )
+    except Exception:
+        return False
 
 
 def _dump_debug(sb, tag):
@@ -90,31 +94,39 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
         sb.open(DKB_LOGIN_URL)
 
         clicked = False
+        consent_clicked = False
         consent_done = False
         settled = False
         for i in range(30):
-            # First remove the Usercentrics consent overlay iframe (see
-            # _CONSENT_REMOVE_JS). Only once it is gone do we click the FRC
-            # widget - otherwise the click lands on the overlay.
+            # First get rid of the consent banner by GUI-clicking "Ablehnen".
+            # Only once the overlay iframe is gone do we touch the FRC widget -
+            # otherwise the click lands on the consent overlay.
             if not consent_done:
-                try:
-                    result = sb.cdp.evaluate(_CONSENT_REMOVE_JS)
-                except Exception as err:
-                    result = None
-                    logger.debug("captcha: consent removal threw -> %r", err)
-                # result is "removed:<n>"; n>0 means the overlay iframe was there
-                # and got removed. n==0 early on just means it has not rendered
-                # yet - wait a few seconds before proceeding to the FRC click.
-                if result and not str(result).endswith(":0"):
-                    logger.info("captcha: consent overlay %s", result)
-                    consent_done = True
-                elif i < 5:
+                if _consent_present(sb):
+                    try:
+                        sb.cdp.gui_click_with_offset("html", *CONSENT_DENY_XY)
+                        consent_clicked = True
+                        logger.info(
+                            "captcha: consent 'Ablehnen' gui-clicked at %s",
+                            CONSENT_DENY_XY,
+                        )
+                    except Exception as err:
+                        logger.warning("captcha: consent gui-click failed -> %r", err)
+                    time.sleep(2)
+                    continue  # re-check on next iteration whether it is gone
+                # iframe no longer present:
+                if consent_clicked:
+                    logger.info("captcha: consent banner dismissed")
+                elif i < 8:
+                    # not rendered yet - give it a few seconds to appear
                     time.sleep(1)
                     continue
+                else:
+                    logger.info("captcha: no consent overlay detected")
+                consent_done = True
 
             # Consent overlay is gone. Let the login page reflow and the FRC
-            # widget initialise before clicking - clicking too early (right
-            # after removing the overlay) lands before the widget is ready.
+            # widget initialise before clicking.
             if not settled:
                 time.sleep(3)
                 settled = True
@@ -124,14 +136,14 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
             # which reliably reaches the frame; fall back to a synthetic CDP
             # click if the GUI click is unavailable.
             try:
-                sb.cdp.gui_click_element("iframe.frc-i-widget")
+                sb.cdp.gui_click_element(FRC_WIDGET_SELECTOR)
                 logger.info("captcha: FRC widget gui-clicked")
                 clicked = True
                 break
             except Exception as gui_err:
                 logger.debug("captcha: FRC gui-click failed: %r", gui_err)
                 try:
-                    sb.cdp.find_element("iframe.frc-i-widget").click()
+                    sb.cdp.find_element(FRC_WIDGET_SELECTOR).click()
                     logger.info("captcha: FRC widget cdp-clicked")
                     clicked = True
                     break

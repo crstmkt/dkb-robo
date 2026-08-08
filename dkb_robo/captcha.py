@@ -91,6 +91,7 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
 
         clicked = False
         consent_done = False
+        settled = False
         for i in range(30):
             # First remove the Usercentrics consent overlay iframe (see
             # _CONSENT_REMOVE_JS). Only once it is gone do we click the FRC
@@ -111,14 +112,31 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
                     time.sleep(1)
                     continue
 
-            # Click the FRC iframe element via CDP (avoids cross-origin switch_to_frame)
+            # Consent overlay is gone. Let the login page reflow and the FRC
+            # widget initialise before clicking - clicking too early (right
+            # after removing the overlay) lands before the widget is ready.
+            if not settled:
+                time.sleep(3)
+                settled = True
+
+            # Click the FRC "I am human" checkbox. The widget iframe is a
+            # cross-origin OOPIF, so prefer a REAL mouse click (GUI, via xvfb)
+            # which reliably reaches the frame; fall back to a synthetic CDP
+            # click if the GUI click is unavailable.
             try:
-                sb.cdp.find_element("iframe.frc-i-widget").click()
-                logger.debug("captcha: FRC checkbox clicked")
+                sb.cdp.gui_click_element("iframe.frc-i-widget")
+                logger.info("captcha: FRC widget gui-clicked")
                 clicked = True
                 break
-            except Exception:
-                time.sleep(1)
+            except Exception as gui_err:
+                logger.debug("captcha: FRC gui-click failed: %r", gui_err)
+                try:
+                    sb.cdp.find_element("iframe.frc-i-widget").click()
+                    logger.info("captcha: FRC widget cdp-clicked")
+                    clicked = True
+                    break
+                except Exception:
+                    time.sleep(1)
 
         if not clicked:
             logger.error("captcha: FRC widget (iframe.frc-i-widget) not found/clickable")

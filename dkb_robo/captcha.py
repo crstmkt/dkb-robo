@@ -11,33 +11,19 @@ FRC_INPUT_SELECTOR = 'input[name="frc-captcha-response"]'
 DKB_LOGIN_URL = "https://banking.dkb.de/login"
 DEBUG_DIR = os.environ.get("DKB_CAPTCHA_DEBUG_DIR", "/tmp")
 
-# Dismiss the cookie consent banner without depending on a specific host id
-# (DKB changed the Usercentrics container). Walk every (open) shadow root,
-# collect all buttons, and click one that matches a deny/accept label. Prefer
-# "deny / only necessary", fall back to "accept all". Returns
-# "clicked:<label>" on success, otherwise "no-button:<json list>" listing the
-# buttons that were found so the matcher can be adjusted from the logs.
-_CONSENT_DISMISS_JS = """
-(() => {
-  function deepButtons(root, acc) {
-    root.querySelectorAll('*').forEach(el => {
-      if (el.shadowRoot) deepButtons(el.shadowRoot, acc);
-    });
-    root.querySelectorAll('button,[role="button"]').forEach(b => acc.push(b));
-  }
-  const btns = [];
-  deepButtons(document, btns);
-  const label = b => ((b.getAttribute('data-testid') || '') + ' ' +
-                      (b.getAttribute('aria-label') || '') + ' ' +
-                      (b.textContent || '')).trim();
-  const deny = /(ablehnen|nur notwendige|only necessary|deny|reject|essenziell|essentiell)/i;
-  const accept = /(alle akzeptieren|alles akzeptieren|accept all|zustimmen|einverstanden|accept)/i;
-  let target = btns.find(b => deny.test(label(b)));
-  if (!target) target = btns.find(b => accept.test(label(b)));
-  if (target) { target.click(); return 'clicked:' + label(target).slice(0, 40); }
-  return 'no-button:' + JSON.stringify(btns.map(b => label(b).slice(0, 30)).slice(0, 25));
-})()
-"""
+# The Usercentrics consent banner renders in a CROSS-ORIGIN iframe
+# (web.cmp.usercentrics.eu), so it is unreachable from top-frame JS (same-origin
+# policy) - neither querySelector nor the UC_UI/__ucCmp globals see it. CDP,
+# however, works below the same-origin policy and can find/click elements inside
+# the iframe, so we click the "deny" button through sb.cdp.find_element().
+# Selectors are tried in order; the deny button is <button id="deny"
+# class="uc-deny-button"> inside footer#uc-cmp-footer of div#uc-main-dialog.
+_CONSENT_SELECTORS = (
+    "button.uc-deny-button",
+    "button#deny",
+    "#uc-main-dialog button.uc-deny-button",
+    'button[data-testid="uc-deny-all-button"]',
+)
 
 
 def _dump_debug(sb, tag):
@@ -95,24 +81,25 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
 
         clicked = False
         consent_done = False
-        for _ in range(30):
-            # Dismiss the Usercentrics cookie consent banner via CDP evaluate.
-            # DKB reworked the dialog (2026-08): the old `button.uc-deny-button`
-            # is gone, so try the current deny selectors and fall back to
-            # "accept all" - the banner just needs to disappear so the FRC
-            # widget becomes interactable.
+        for i in range(30):
+            # First get rid of the Usercentrics consent banner (cross-origin
+            # iframe, so only reachable via CDP). Only once it is gone do we
+            # click the FRC widget - otherwise the click lands on the overlay.
             if not consent_done:
-                try:
-                    result = sb.cdp.evaluate(_CONSENT_DISMISS_JS)
-                    if result and str(result).startswith("clicked:"):
-                        logger.info("captcha: consent dismissed -> %s", result)
+                for sel in _CONSENT_SELECTORS:
+                    try:
+                        sb.cdp.find_element(sel).click()
+                        logger.info("captcha: consent dismissed via %s", sel)
                         consent_done = True
-                    else:
-                        # not clicked (no-button / unexpected) - surface the
-                        # available buttons so the matcher can be adjusted
-                        logger.warning("captcha: consent not dismissed -> %s", result)
-                except Exception as err:
-                    logger.warning("captcha: consent dismiss threw -> %r", err)
+                        break
+                    except Exception:
+                        continue
+                # give the banner a few seconds to appear before giving up on
+                # it (e.g. when consent was already persisted, there is none)
+                if not consent_done and i < 5:
+                    time.sleep(1)
+                    continue
+
             # Click the FRC iframe element via CDP (avoids cross-origin switch_to_frame)
             try:
                 sb.cdp.find_element("iframe.frc-i-widget").click()

@@ -28,14 +28,24 @@ CONSENT_IFRAME_SELECTOR = 'iframe[src*="usercentrics"]'
 CONSENT_DENY_XY = (491, 537)
 
 
+_CONSENT_VISIBLE_JS = """
+(() => {
+  const f = document.querySelector('iframe[src*="usercentrics"]');
+  if (!f) return false;
+  const r = f.getBoundingClientRect();
+  const st = window.getComputedStyle(f);
+  // after consent is given the iframe lingers hidden / zero-sized for
+  // cross-domain sync; only the full-screen wall is large and visible.
+  return r.width > 100 && r.height > 100 &&
+         st.display !== 'none' && st.visibility !== 'hidden';
+})()
+"""
+
+
 def _consent_present(sb):
-    """return True while the Usercentrics consent overlay iframe is in the DOM"""
+    """return True only while the consent wall iframe is actually visible"""
     try:
-        return bool(
-            sb.cdp.evaluate(
-                f'!!document.querySelector(\'{CONSENT_IFRAME_SELECTOR}\')'
-            )
-        )
+        return bool(sb.cdp.evaluate(_CONSENT_VISIBLE_JS))
     except Exception:
         return False
 
@@ -94,18 +104,18 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
         sb.open(DKB_LOGIN_URL)
 
         clicked = False
-        consent_clicked = False
+        consent_clicks = 0
         consent_done = False
         settled = False
         for i in range(30):
             # First get rid of the consent banner by GUI-clicking "Ablehnen".
-            # Only once the overlay iframe is gone do we touch the FRC widget -
-            # otherwise the click lands on the consent overlay.
+            # Only once the wall is gone do we touch the FRC widget - otherwise
+            # the click lands on the consent overlay.
             if not consent_done:
-                if _consent_present(sb):
+                if _consent_present(sb) and consent_clicks < 6:
                     try:
                         sb.cdp.gui_click_with_offset("html", *CONSENT_DENY_XY)
-                        consent_clicked = True
+                        consent_clicks += 1
                         logger.info(
                             "captcha: consent 'Ablehnen' gui-clicked at %s",
                             CONSENT_DENY_XY,
@@ -114,9 +124,13 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
                         logger.warning("captcha: consent gui-click failed -> %r", err)
                     time.sleep(2)
                     continue  # re-check on next iteration whether it is gone
-                # iframe no longer present:
-                if consent_clicked:
-                    logger.info("captcha: consent banner dismissed")
+                # wall no longer visible (dismissed), or we gave up clicking:
+                if consent_clicks:
+                    logger.info(
+                        "captcha: consent handled after %s click(s), visible=%s",
+                        consent_clicks,
+                        _consent_present(sb),
+                    )
                 elif i < 8:
                     # not rendered yet - give it a few seconds to appear
                     time.sleep(1)

@@ -12,18 +12,28 @@ DKB_LOGIN_URL = "https://banking.dkb.de/login"
 DEBUG_DIR = os.environ.get("DKB_CAPTCHA_DEBUG_DIR", "/tmp")
 
 # The Usercentrics consent banner renders in a CROSS-ORIGIN iframe
-# (web.cmp.usercentrics.eu), so it is unreachable from top-frame JS (same-origin
-# policy) - neither querySelector nor the UC_UI/__ucCmp globals see it. CDP,
-# however, works below the same-origin policy and can find/click elements inside
-# the iframe, so we click the "deny" button through sb.cdp.find_element().
-# Selectors are tried in order; the deny button is <button id="deny"
-# class="uc-deny-button"> inside footer#uc-cmp-footer of div#uc-main-dialog.
-_CONSENT_SELECTORS = (
-    "button.uc-deny-button",
-    "button#deny",
-    "#uc-main-dialog button.uc-deny-button",
-    'button[data-testid="uc-deny-all-button"]',
-)
+# (web.cmp.usercentrics.eu). Its buttons are unreachable: same-origin policy
+# blocks JS, and the iframe is an out-of-process frame (OOPIF) in its own CDP
+# target, so sb.cdp.find_element() (main-frame target) cannot see them either -
+# and CDP Mode in seleniumbase has no frame switching.
+# The iframe ELEMENT, however, lives in the top document (only its *content* is
+# cross-origin). So instead of clicking "deny" we simply remove the overlay
+# iframe (and its wrapper) from the top frame and release the scroll lock -
+# that unblocks the underlying login page / FRC widget. Returns "removed:<n>".
+_CONSENT_REMOVE_JS = """
+(() => {
+  let n = 0;
+  document.querySelectorAll('iframe[src*="usercentrics"], iframe[src*="cmp"]').forEach(f => {
+    const p = f.parentElement;
+    f.remove();
+    if (p && p !== document.body && p.tagName === 'DIV' && !p.querySelector('iframe')) p.remove();
+    n++;
+  });
+  document.documentElement.style.overflow = '';
+  document.body.style.overflow = '';
+  return 'removed:' + n;
+})()
+"""
 
 
 def _dump_debug(sb, tag):
@@ -82,21 +92,22 @@ def get_dkb_redeem_token(timeout=60, headless=False, xvfb=False):
         clicked = False
         consent_done = False
         for i in range(30):
-            # First get rid of the Usercentrics consent banner (cross-origin
-            # iframe, so only reachable via CDP). Only once it is gone do we
-            # click the FRC widget - otherwise the click lands on the overlay.
+            # First remove the Usercentrics consent overlay iframe (see
+            # _CONSENT_REMOVE_JS). Only once it is gone do we click the FRC
+            # widget - otherwise the click lands on the overlay.
             if not consent_done:
-                for sel in _CONSENT_SELECTORS:
-                    try:
-                        sb.cdp.find_element(sel).click()
-                        logger.info("captcha: consent dismissed via %s", sel)
-                        consent_done = True
-                        break
-                    except Exception:
-                        continue
-                # give the banner a few seconds to appear before giving up on
-                # it (e.g. when consent was already persisted, there is none)
-                if not consent_done and i < 5:
+                try:
+                    result = sb.cdp.evaluate(_CONSENT_REMOVE_JS)
+                except Exception as err:
+                    result = None
+                    logger.debug("captcha: consent removal threw -> %r", err)
+                # result is "removed:<n>"; n>0 means the overlay iframe was there
+                # and got removed. n==0 early on just means it has not rendered
+                # yet - wait a few seconds before proceeding to the FRC click.
+                if result and not str(result).endswith(":0"):
+                    logger.info("captcha: consent overlay %s", result)
+                    consent_done = True
+                elif i < 5:
                     time.sleep(1)
                     continue
 
